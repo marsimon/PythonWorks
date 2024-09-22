@@ -1,13 +1,15 @@
-import requests
 from io import BytesIO
-from openpyxl import Workbook
+import time
+import os
+
+import requests
+import openpyxl as op
 from openpyxl.drawing.image import Image
 from PIL import Image as PILImage
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 import pandas as pd
-import time
 
 def get_youtube_trending_page_selenium(country_code='KR'):
     # ChromeDriver 경로 설정
@@ -52,6 +54,7 @@ def parse_trending_videos_selenium(driver):
             
             channel = video.find_element(By.XPATH, './/*[@id="text"]/a').text
             views = video.find_element(By.XPATH, './/*[@id="metadata-line"]/span[1]').text
+            date = video.find_element(By.XPATH, './/*[@id="metadata-line"]/span[2]').text
 
             # 썸네일 URL 추출
             thumbnail_element = video.find_element(By.XPATH, './/*[@id="thumbnail"]/yt-image/img')
@@ -62,6 +65,7 @@ def parse_trending_videos_selenium(driver):
                 'Title': title,
                 'Channel': channel,
                 'Views': views,
+                'Date': date,
                 'URL': url,
                 'Thumbnail': thumbnail_url
             })
@@ -72,17 +76,20 @@ def parse_trending_videos_selenium(driver):
 
 
 # Function to download and save thumbnail images, then embed them into Excel
-def save_to_excel_with_images(video_data, file_name='youtube_trending_with_images.xlsx'):
-    wb = Workbook()
-    ws = wb.active
+def save_to_excel_with_images(video_data,code):
+    wb = op.load_workbook('result.xlsx')
+    ws = wb.create_sheet(code)
 
     # 헤더 추가
-    headers = ['Rank', 'Title', 'Channel', 'Views', 'URL', 'Thumbnail']
+    headers = ['Rank', 'Title', 'Channel', 'Views','date', 'Thumbnail', 'URL']
     ws.append(headers)
     
     # 엑셀 셀 크기 설정 (썸네일 크기에 맞게)
-    
-    ws.column_dimensions['F'].width = 16  # 열 너비 설정
+    ws.column_dimensions['A'].width = 5  # 열 너비 설정
+    ws.column_dimensions['B'].width = 54  # 열 너비 설정
+    ws.column_dimensions['C'].width = 25  # 열 너비 설정
+    ws.column_dimensions['D'].width = 16  # 열 너비 설정
+    ws.column_dimensions['E'].width = 10  # 열 너비 설정
     ws.column_dimensions['F'].width = 16  # 열 너비 설정
 
     for index, video in enumerate(video_data, start=2):
@@ -101,26 +108,43 @@ def save_to_excel_with_images(video_data, file_name='youtube_trending_with_image
             
             # 썸네일을 셀에 삽입
             ws.add_image(excel_img, f'F{index}')
+            
         except Exception as e:
             print(f"Failed to download image for video {video['Rank']}: {e}")
+            
 
         # 텍스트 데이터 추가
-        ws.append([video['Rank'], video['Title'], video['Channel'], video['Views'], video['URL']])
+        ws.append([video['Rank'], video['Title'], video['Channel'], video['Views'], video['Date'],'',video['URL']])
 
     # 엑셀 파일 저장
-    wb.save(file_name)
-    print(f'Data saved to {file_name}')
+    
+    wb.save('result.xlsx')
+    print(f'Data saved.')
+
+    for i in range(1, 100):
+        file_name = f"thumbnail_{i}.png"  # 1.txt, 2.txt, ..., 99.txt와 같은 파일명 생성
+        delete_file_if_exists(file_name)
+
+def delete_file_if_exists(file_path):
+    if os.path.exists(file_path):
+        os.remove(file_path)
+        print(f"{file_path} 파일이 삭제되었습니다.")
+    else:
+        print(f"{file_path} 파일이 존재하지 않습니다.")
 
 # Main script
 def main():
-    country_code = 'KR'
-    driver = get_youtube_trending_page_selenium(country_code)
-    
-    try:
-        video_data = parse_trending_videos_selenium(driver)
-        save_to_excel_with_images(video_data)
-    finally:
-        driver.quit()
+    country_list = ['KR','US','VN','BR','ID','JP','TH','PH']
+    wb = op.Workbook()
+    wb.save('result.xlsx')
+
+    for code in country_list:
+        driver = get_youtube_trending_page_selenium(code)
+        try:
+            video_data = parse_trending_videos_selenium(driver)
+            save_to_excel_with_images(video_data,code)
+        finally:
+            driver.quit()
 
 if __name__ == '__main__':
     main()
