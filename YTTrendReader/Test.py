@@ -5,7 +5,9 @@ import os
 import requests
 import openpyxl as op
 from openpyxl.drawing.image import Image
+from openpyxl.chart import BarChart, Reference
 from PIL import Image as PILImage
+import pillow_avif
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
@@ -20,29 +22,8 @@ import re
 # 번역기 객체 생성
 translator = Translator()
 
-# 번역 및 키워드 추출 함수
-def translate_and_extract_keywords(sentences, language_code):
-    translated_sentences = []
-    
-    # 각 문장을 한국어로 번역
-    for sentence in sentences:
-        translated = translator.translate(sentence, src=language_code, dest='ko').text
-        translated_sentences.append(translated)
-    
-    # 모든 번역된 문장을 하나로 합치기
-    all_text = ' '.join(translated_sentences)
-    
-    # 불용어 제거 및 텍스트 전처리
-    stop_words = set(stopwords.words('korean'))
-    words = re.findall(r'\b\w+\b', all_text)
-    words = [word for word in words if word not in stop_words]
-    
-    # 빈도 계산
-    word_freq = Counter(words)
-    
-    return word_freq.most_common(10)  # 상위 10개의 키워드를 추출
-
-# 각 국가별로 번역하고 키워드 추출하기
+# nltk의 stopwords 다운로드
+nltk.download('stopwords')
 
 
 def get_youtube_trending_page_selenium(country_code='KR'):
@@ -115,7 +96,7 @@ def save_to_excel_with_images(video_data,code):
     ws = wb.create_sheet(code)
 
     # 헤더 추가
-    headers = ['Rank', 'Title', 'Channel', 'Views','date', 'Thumbnail', 'URL']
+    headers = ['Rank', 'Title', 'Channel', 'Views','date', 'Thumbnail', 'URL','Translated Title']
     ws.append(headers)
     
     # 엑셀 셀 크기 설정 (썸네일 크기에 맞게)
@@ -125,7 +106,13 @@ def save_to_excel_with_images(video_data,code):
     ws.column_dimensions['D'].width = 16  # 열 너비 설정
     ws.column_dimensions['E'].width = 10  # 열 너비 설정
     ws.column_dimensions['F'].width = 16  # 열 너비 설정
-
+    ws.column_dimensions['G'].width = 43  # 열 너비 설정
+    translated_sentences = []
+    
+    #미국인 경우 썸네일 확장자 변경
+    if code == 'US' : fileNameExt = '.avif' 
+    else : fileNameExt = '.png'
+    
     for index, video in enumerate(video_data, start=2):
         # 썸네일 이미지를 다운로드
         try:
@@ -134,7 +121,7 @@ def save_to_excel_with_images(video_data,code):
             img = PILImage.open(img_data)
 
             # 이미지 임시 저장 후 엑셀 삽입
-            img_filename = f"thumbnail_{index}.png"
+            img_filename = f"thumbnail_{index}" + fileNameExt
             img.save(img_filename)
             excel_img = Image(img_filename)
             excel_img.width, excel_img.height = (128, 72)
@@ -143,20 +130,55 @@ def save_to_excel_with_images(video_data,code):
             # 썸네일을 셀에 삽입
             ws.add_image(excel_img, f'F{index}')
             
+            
         except Exception as e:
             print(f"Failed to download image for video {video['Rank']}: {e}")
             
-
+        translated = translator.translate(video['Title'], dest='ko').text
+        translated_sentences.append(translated)
         # 텍스트 데이터 추가
-        ws.append([video['Rank'], video['Title'], video['Channel'], video['Views'], video['Date'],'',video['URL']])
+        ws.append([video['Rank'], video['Title'], video['Channel'], video['Views'], video['Date'],'',video['URL'],translated])
+
+    
+    # 모든 번역된 문장을 하나로 합치기
+    all_text = ' '.join(translated_sentences)
+    
+    # 불용어 제거 및 텍스트 전처리
+    stop_words = set(stopwords.words('korean'))
+    words = re.findall(r'\b\w+\b', all_text)
+    words = [word for word in words if word not in stop_words]
+    
+    # 빈도 계산
+    word_freq = Counter(words)
+    
+    ws = wb.create_sheet(code+"_chart")
+    
+    ws.append(["Word", "Frequency"])  # 헤더 추가
+    for word, freq in word_freq.most_common(20):
+        ws.append([word, freq])
+
+    # 차트 생성
+    chart = BarChart()
+    chart.title = "Word Frequency Chart"
+    chart.x_axis.title = "Words"
+    chart.y_axis.title = "Frequency"
+    chart.style = 10  # 차트 스타일 지정
+
+    # 차트에 데이터 추가 (범위 지정)
+    data = Reference(ws, min_col=2, min_row=1, max_row=21, max_col=2)  # 등장 횟수 (B열 데이터)
+    categories = Reference(ws, min_col=1, min_row=2, max_row=21)  # 단어 목록 (A열 데이터)
+    chart.add_data(data, titles_from_data=True)
+    chart.set_categories(categories)
+
+    # 차트를 워크시트에 추가 (위치는 B10셀부터)
+    ws.add_chart(chart, "D5")
 
     # 엑셀 파일 저장
-    
     wb.save('result.xlsx')
     print(f'Data saved.')
 
     for i in range(1, 100):
-        file_name = f"thumbnail_{i}.png"  # 1.txt, 2.txt, ..., 99.txt와 같은 파일명 생성
+        file_name = f"thumbnail_{i}"+fileNameExt 
         delete_file_if_exists(file_name)
 
 def delete_file_if_exists(file_path):
@@ -168,11 +190,10 @@ def delete_file_if_exists(file_path):
 
 # Main script
 def main():
-    #country_list = ['KR','US','VN','BR','ID','JP','TH','PH']
-    country_list = ['US']
+    country_list = ['US','VN','BR','ID','JP','TH','PH']
+    #country_list = ['PH']
     wb = op.Workbook()
     wb.save('result.xlsx')
-
     for code in country_list:
         driver = get_youtube_trending_page_selenium(code)
         try:
@@ -180,44 +201,8 @@ def main():
             save_to_excel_with_images(video_data,code)
         finally:
             driver.quit()
-
-    # nltk의 stopwords 다운로드
-    nltk.download('stopwords')
-
-
-    # 각국 문장 예시 (사용자 문장을 여기에 넣어주세요)
-    sentences_by_country = {
-        "US": ["Your Vietnamese sentences here..."],
-        "JP": ["Your Japanese sentences here..."],
-    }
-
-    keywords_by_country = {}
-    for country, sentences in sentences_by_country.items():
-        if country == "US":
-            language_code = 'en'
-        elif country == "VN":
-            language_code = 'vi'
-        elif country == "BR":
-            language_code = 'pt-BR'
-        elif country == "ID":
-            language_code = 'id'
-        elif country == "JP":
-            language_code = 'ja'
-        elif country == "TH":
-            language_code = 'th'
-        elif country == "PH":
-            language_code = 'fil'
-        # 다른 국가도 마찬가지로 처리
-        # ...
     
-        keywords_by_country[country] = translate_and_extract_keywords(sentences, language_code)
-
-    # 결과 출력
-    for country, keywords in keywords_by_country.items():
-        print(f"Country: {country}")
-        print(f"Top Keywords: {keywords}")
-        print("\n")
-
+    wb.save('result.xlsx')
 
 if __name__ == '__main__':
     main()
