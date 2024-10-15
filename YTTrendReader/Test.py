@@ -201,8 +201,6 @@ def main():
             save_to_excel_with_images(video_data,code)
         finally:
             driver.quit()
-    
-    wb.save('result.xlsx')
 
 if __name__ == '__main__':
     main()
